@@ -1,0 +1,56 @@
+# develop -> dev workspace
+# uat     -> uat workspace (+ test run of the pipeline)
+# main    -> prod workspace
+name: cd
+
+on:
+  push:
+    branches: [develop, uat, main]
+  workflow_dispatch:
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  target:
+    runs-on: ubuntu-latest
+    outputs:
+      env: ${{ steps.map.outputs.env }}
+    steps:
+      - id: map
+        run: |
+          case "${{ github.ref_name }}" in
+            develop) echo "env=dev"  >> "$GITHUB_OUTPUT" ;;
+            uat)     echo "env=uat"  >> "$GITHUB_OUTPUT" ;;
+            main)    echo "env=prod" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::no environment for branch ${{ github.ref_name }}"; exit 1 ;;
+          esac
+
+  foundation:
+    needs: target
+    uses: ./.github/workflows/_terraform.yml
+    with:
+      environment: ${{ needs.target.outputs.env }}
+      stack: foundation
+      apply: true
+
+  workspace:
+    needs: [target, foundation]
+    uses: ./.github/workflows/_terraform.yml
+    with:
+      environment: ${{ needs.target.outputs.env }}
+      stack: workspace
+      apply: true
+
+  bundle:
+    needs: [target, workspace]
+    uses: ./.github/workflows/_bundle.yml
+    with:
+      environment: ${{ needs.target.outputs.env }}
+      deploy: true
+      run_job: ${{ needs.target.outputs.env == 'uat' && 'medallion_orders' || '' }}

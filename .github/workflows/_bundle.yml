@@ -1,0 +1,63 @@
+name: bundle
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: dev | uat | prod
+        type: string
+        required: true
+      github_environment:
+        description: GitHub environment to run in (defaults to environment; PRs use <env>-plan)
+        type: string
+        default: ""
+      deploy:
+        type: boolean
+        default: false
+      run_job:
+        description: Optional job key to run after deploy (integration test)
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  bundle:
+    name: bundle (${{ inputs.deploy && 'deploy' || 'validate' }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.github_environment || inputs.environment }}
+    concurrency:
+      group: bundle-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      DATABRICKS_AUTH_TYPE: azure-cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tooling
+        run: pip install build
+
+      - uses: databricks/setup-cli@main
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate
+        run: databricks bundle validate -t ${{ inputs.environment }}
+
+      - name: Deploy
+        if: inputs.deploy
+        run: databricks bundle deploy -t ${{ inputs.environment }}
+
+      - name: Run ${{ inputs.run_job }}
+        if: inputs.deploy && inputs.run_job != ''
+        run: databricks bundle run -t ${{ inputs.environment }} ${{ inputs.run_job }}

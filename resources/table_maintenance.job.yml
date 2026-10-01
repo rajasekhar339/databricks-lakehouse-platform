@@ -1,0 +1,22 @@
+resources:
+  jobs:
+    table_maintenance:
+      name: table-maintenance
+      description: Weekly OPTIMIZE / VACUUM of silver and gold tables on the SQL warehouse.
+      tags:
+        domain: platform
+      schedule:
+        quartz_cron_expression: "0 0 4 ? * SUN"
+        timezone_id: UTC
+        pause_status: ${var.schedule_pause_status}
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+      tasks:
+        - task_key: optimize_and_vacuum
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../src/sql/table_maintenance.sql
+            parameters:
+              catalog: ${var.catalog}

@@ -1,0 +1,70 @@
+bundle:
+  name: lakehouse
+
+include:
+  - resources/*.yml
+
+artifacts:
+  lakehouse_wheel:
+    type: whl
+    build: python -m build --wheel
+    path: .
+
+# warehouse and cluster policy are created by terraform (infra/terraform)
+variables:
+  catalog:
+    description: Unity Catalog catalog for the target environment (created by Terraform).
+  warehouse_id:
+    description: SQL warehouse created by Terraform (same name in every workspace).
+    lookup:
+      warehouse: wh-lakehouse
+  job_policy_id:
+    description: Job compute cluster policy created by Terraform.
+    lookup:
+      cluster_policy: lakehouse-job-compute
+  node_type_id:
+    default: Standard_D4ds_v5
+  max_workers:
+    default: 2
+  notification_email:
+    default: data-platform-alerts@example.com
+  schedule_pause_status:
+    default: PAUSED
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://adb-1111111111111111.11.azuredatabricks.net
+    variables:
+      catalog: dev_lakehouse
+
+  uat:
+    mode: production
+    workspace:
+      host: https://adb-2222222222222222.12.azuredatabricks.net
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: 00000000-0000-0000-0000-000000000002
+    variables:
+      catalog: uat_lakehouse
+      max_workers: 4
+    permissions:
+      - group_name: data-platform-engineers
+        level: CAN_MANAGE_RUN
+
+  prod:
+    mode: production
+    workspace:
+      host: https://adb-3333333333333333.13.azuredatabricks.net
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: 00000000-0000-0000-0000-000000000003
+    variables:
+      catalog: prod_lakehouse
+      max_workers: 8
+      schedule_pause_status: UNPAUSED
+    permissions:
+      - group_name: data-platform-engineers
+        level: CAN_VIEW

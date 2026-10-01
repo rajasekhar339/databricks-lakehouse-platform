@@ -1,0 +1,81 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [develop, uat, main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # develop -> uat -> main. Only hotfix/* branches may skip the line.
+  promotion-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check source branch
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          case "$BASE" in
+            uat)  [[ "$HEAD" == "develop" || "$HEAD" == hotfix/* ]] ;;
+            main) [[ "$HEAD" == "uat" || "$HEAD" == hotfix/* ]] ;;
+            *)    true ;;
+          esac || { echo "::error::PRs into $BASE must come from the previous environment branch (got $HEAD)"; exit 1; }
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests
+      - run: pytest -q
+      - run: python -m build --wheel
+
+  terraform-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform fmt -check -recursive infra/terraform
+      - name: Validate stacks
+        run: |
+          for stack in foundation workspace; do
+            terraform -chdir=infra/terraform/stacks/$stack init -backend=false -input=false
+            terraform -chdir=infra/terraform/stacks/$stack validate
+          done
+
+  # plan against the environment this PR will deploy to.
+  # *-plan environments have no branch limit, so PR runs can use them.
+  plan:
+    needs: [promotion-check, terraform-static]
+    strategy:
+      matrix:
+        stack: [foundation, workspace]
+    uses: ./.github/workflows/_terraform.yml
+    with:
+      environment: ${{ github.base_ref == 'main' && 'prod' || github.base_ref == 'uat' && 'uat' || 'dev' }}
+      github_environment: ${{ github.base_ref == 'main' && 'prod-plan' || github.base_ref == 'uat' && 'uat-plan' || 'dev-plan' }}
+      stack: ${{ matrix.stack }}
+
+  bundle-validate:
+    needs: [promotion-check, python]
+    uses: ./.github/workflows/_bundle.yml
+    with:
+      environment: ${{ github.base_ref == 'main' && 'prod' || github.base_ref == 'uat' && 'uat' || 'dev' }}
+      github_environment: ${{ github.base_ref == 'main' && 'prod-plan' || github.base_ref == 'uat' && 'uat-plan' || 'dev-plan' }}

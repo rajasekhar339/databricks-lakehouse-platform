@@ -1,0 +1,85 @@
+name: terraform
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: dev | uat | prod
+        type: string
+        required: true
+      github_environment:
+        description: GitHub environment to run in (defaults to environment; PRs use <env>-plan)
+        type: string
+        default: ""
+      stack:
+        description: foundation | workspace
+        type: string
+        required: true
+      apply:
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write # GitHub OIDC -> Entra ID federated credential (no client secrets)
+  contents: read
+
+jobs:
+  terraform:
+    name: ${{ inputs.stack }} (${{ inputs.apply && 'apply' || 'plan' }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.github_environment || inputs.environment }}
+    concurrency:
+      group: tf-${{ inputs.environment }}-${{ inputs.stack }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: infra/terraform/stacks/${{ inputs.stack }}
+    env:
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      DATABRICKS_AUTH_TYPE: azure-cli
+      TF_IN_AUTOMATION: "true"
+      ENV_DIR: ../../environments/${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Init
+        run: >
+          terraform init -input=false
+          -backend-config="$ENV_DIR/backend.hcl"
+          -backend-config="key=${{ inputs.stack }}.tfstate"
+
+      - name: Plan
+        run: >
+          terraform plan -input=false -lock-timeout=5m
+          -var-file="$ENV_DIR/${{ inputs.stack }}.tfvars"
+          -out=tfplan
+
+      - name: Publish plan to job summary
+        run: |
+          {
+            echo "### Terraform plan: \`${{ inputs.stack }}\` in \`${{ inputs.environment }}\`"
+            echo '<details><summary>Show plan</summary>'
+            echo
+            echo '```'
+            terraform show -no-color tfplan | tail -c 60000
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply
+        if: inputs.apply
+        run: terraform apply -input=false -lock-timeout=5m tfplan
