@@ -95,14 +95,7 @@ terraform plan -var-file=../../environments/dev/foundation.tfvars
 
 ## Assumptions
 
-- Azure Databricks, Premium tier, with an existing Unity Catalog metastore in the region.
+- Azure Databricks with an existing Unity Catalog metastore in the region.
 - `data-platform-engineers` and `data-analysts` groups are synced from Entra ID.
 - One-time setup is done beforehand. See [docs/setup.md](docs/setup.md).
 - Subscription, account and service principal IDs and workspace URLs are placeholders.
-
-## With more time I would add
-
-- Private Link and VNet injection for prod, with self-hosted runners.
-- Separate service principals for deploying and for running jobs.
-- Lakeflow / DLT pipelines with expectations instead of the plain SQL checks.
-- Alerting and cost dashboards (system tables).
